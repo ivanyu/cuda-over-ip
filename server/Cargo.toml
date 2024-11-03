@@ -1,0 +1,10 @@
+[package]
+name = "cuda-over-ip-server"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+
+[dependencies]
+cuda-over-ip-protocol = {path = "../protocol"}
+prost = "0.13.3"
+byteorder = "1.5.0"

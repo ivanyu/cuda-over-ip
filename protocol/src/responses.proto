@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package protocol.responses;
+
+message nvmlInitWithFlags {
+    uint32 result = 1;
+}
+
+message nvmlInit_v2 {
+
+}
+
+message nvmlShutdown {
+
+}
+
+message RemoteResponse {
+    oneof call {
+        nvmlInitWithFlags nvmlInitWithFlags = 1;
+        nvmlInit_v2 nvmlInit_v2 = 2;
+        nvmlShutdown nvmlShutdown = 3;
+    }
+}

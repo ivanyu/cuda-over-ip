@@ -1,0 +1,12 @@
+[package]
+name = "parser_wip"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cuda-over-ip-protocol = {path = "../protocol"}  # TODO remove
+clang = { version = "2.0.0", features = ["runtime"] }
+quote = "1.0.37"
+proc-macro2 = "1.0.89"
+prettyplease = "0.2.25"
+syn = "2.0.86"

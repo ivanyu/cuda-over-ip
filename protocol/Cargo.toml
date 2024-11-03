@@ -1,0 +1,11 @@
+[package]
+name = "cuda-over-ip-protocol"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+
+[dependencies]
+prost = "0.13.3"
+
+[build-dependencies]
+prost-build = "0.13.3"
