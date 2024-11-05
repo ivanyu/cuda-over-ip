@@ -1,0 +1,5 @@
+---
+- name: nvmlInitWithFlags
+  params:
+    - name: flags
+      direction: in
