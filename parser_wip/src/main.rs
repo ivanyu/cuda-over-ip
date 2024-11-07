@@ -6,7 +6,7 @@ use quote::quote;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::Write;
-use clang::TypeKind::Enum;
+use heck::AsUpperCamelCase;
 use serde::Deserialize;
 use syn::{parse2, Item};
 
@@ -149,14 +149,8 @@ fn main() {
 
     let enums = extract_enums(&entities, &functions);
 
-    let header_proto = generate_protobuf_header();
-    let enums_proto = generate_protobuf_enums(&enums);
-    let functions_proto = generate_protobuf_functions(&functions);
-
-    let mut output_file = File::create("protocol/src/protocol.proto").unwrap();
-    output_file.write(header_proto.as_bytes()).unwrap();
-    output_file.write(enums_proto.as_bytes()).unwrap();
-    output_file.write(functions_proto.as_bytes()).unwrap();
+    generate_protobuf("protocol/src/protocol.proto", &enums, &functions);
+    generate_client("client/src/lib.rs", &enums, &functions);
 }
 
 fn extract_functions<'a>(entities: &'a [Entity<'a>], required_functions: HashSet<String>) -> HashMap<String, CFunction<'a>> {
@@ -201,6 +195,16 @@ fn extract_enums<'a>(entities: &'a [Entity<'a>], functions: &'a HashMap<String, 
     }).collect::<Vec<_>>()
 }
 
+fn generate_protobuf(output_path: &str, enums: &[EnumDef], functions: &HashMap<String, FunctionDef>) {
+    let header_proto = generate_protobuf_header();
+    let enums_proto = generate_protobuf_enums(&enums);
+    let functions_proto = generate_protobuf_functions(&functions);
+    let mut output_file = File::create(output_path).unwrap();
+    output_file.write(header_proto.as_bytes()).unwrap();
+    output_file.write(enums_proto.as_bytes()).unwrap();
+    output_file.write(functions_proto.as_bytes()).unwrap();
+}
+
 fn generate_protobuf_header() -> String {
     let mut result = String::new();
 
@@ -223,7 +227,7 @@ fn generate_protobuf_enums(enums: &[EnumDef]) -> String {
                 [] => {
                     result.push_str(&format!("  {};\n", element.get_display_name().unwrap()));
                 }
-                [a] => {
+                [_] => {
                     result.push_str(&format!("  {} = {};\n",
                                              element.get_display_name().unwrap(),
                                              element.get_enum_constant_value().unwrap().0));
@@ -270,7 +274,7 @@ fn generate_protobuf_functions(functions: &HashMap<String, FunctionDef>) -> Stri
 
     result.push_str("message Call {\n");
     result.push_str("  oneof type {\n");
-    for (i, (name, func_def)) in functions.iter().enumerate() {
+    for (i, (name, _)) in functions.iter().enumerate() {
         result.push_str(&format!("    {}Call {}Call = {};\n", name, name, i + 1));
     }
     result.push_str("  }\n");
@@ -279,7 +283,7 @@ fn generate_protobuf_functions(functions: &HashMap<String, FunctionDef>) -> Stri
 
     result.push_str("message Result {\n");
     result.push_str("  oneof type {\n");
-    for (i, (name, func_def)) in functions.iter().enumerate() {
+    for (i, (name, _)) in functions.iter().enumerate() {
         result.push_str(&format!("    {}Result {}Result = {};\n", name, name, i + 1));
     }
     result.push_str("  }\n");
@@ -295,6 +299,122 @@ fn c_to_protobuf_type(type_: &Type) -> String {
 
         _ => panic!("Unsupported type {:?}", type_)
     }
+}
+
+fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<String, FunctionDef>) {
+    let other_imports = vec![
+        quote! {use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};},
+        quote! {use std::io::{BufReader, BufWriter, Read, Write};},
+        quote! {use std::net::TcpStream;},
+        quote! {use prost::Message;},
+    ];
+
+    let mut protocol_imports: HashSet<String> = HashSet::new();
+    protocol_imports.insert("Call".to_owned());
+    protocol_imports.insert("call".to_owned());
+    protocol_imports.insert("Result".to_owned());
+    protocol_imports.insert("result".to_owned());
+
+    let functions_tok: Vec<TokenStream> = functions.iter().map(|(name, def)| {
+        let name_tok: TokenStream = name.parse().unwrap();
+        let params_tok: Vec<TokenStream> = def.c_function.params.iter().map(|param_entity| {
+            assert_eq!(param_entity.get_kind(), EntityKind::ParmDecl);
+            let name_tok: TokenStream = param_entity.get_name().unwrap().parse().unwrap();
+            let type_tok: TokenStream = match param_entity.get_type().unwrap().get_kind() {
+                TypeKind::UInt =>
+                // 32 bits should be enough for `unsigned int` on all realistic platforms
+                    quote!(u32),
+
+                t =>
+                    panic!("Unsupported type {:?}", t)
+            };
+            quote! { #name_tok: #type_tok }
+        }).collect();
+        let rust_enum_name = c_to_rust_name(&def.c_function.return_type.get_display_name());
+        let result_type_tok: TokenStream = rust_enum_name.parse().unwrap();
+        protocol_imports.insert(rust_enum_name.clone());
+
+        let call_struct_name = c_to_rust_name(name) + "Call";
+        let call_struct_name_tok: TokenStream = call_struct_name.parse().unwrap();
+        protocol_imports.insert(call_struct_name);
+        let result_struct_name = c_to_rust_name(name) + "Result";
+        let result_struct_name_tok: TokenStream = result_struct_name.parse().unwrap();
+        protocol_imports.insert(result_struct_name);
+
+        let in_params_tok: Vec<TokenStream> = def.description.params.iter()
+            .filter(|param| param.direction == ParameterDirection::IN)
+            .map(|param| param.name.parse().unwrap())
+            .collect();
+        let out_params_tok: Vec<TokenStream> = def.description.params.iter()
+            .filter(|param| param.direction == ParameterDirection::OUT)
+            .map(|param| param.name.parse().unwrap())
+            .collect();
+
+        quote! {
+            #[no_mangle]
+            pub unsafe extern "C" fn #name_tok (#(#params_tok),*) -> #result_type_tok {
+                let tcp_stream_read = TcpStream::connect("127.0.0.1:19999").unwrap();
+                let tcp_stream_write = tcp_stream_read.try_clone().unwrap();
+                tcp_stream_read.set_nodelay(true).unwrap();
+
+                let call = Call {
+                    r#type: Some(
+                        call::Type::#call_struct_name_tok(#call_struct_name_tok { #(#in_params_tok),* })
+                    )
+                };
+                let mut buf = Vec::<u8>::with_capacity(call.encoded_len());
+                call.encode(&mut buf).unwrap();
+
+                let mut buf_writer = BufWriter::new(tcp_stream_write);
+                buf_writer.write_u32::<BigEndian>(call.encoded_len() as u32).unwrap();
+                buf_writer.write_all(&buf).unwrap();
+                buf_writer.flush().unwrap();
+
+                let mut buf_reader = BufReader::new(tcp_stream_read);
+                let size = buf_reader.read_u32::<BigEndian>().unwrap() as usize;
+                let mut buf = vec![0_u8; size];
+                buf_reader.read_exact(&mut buf).unwrap();
+                let result = Result::decode(&*buf).unwrap();
+                match result.r#type {
+                    Some(result::Type::#result_struct_name_tok(
+                        #(#out_params_tok),* #result_struct_name_tok{r#return}
+                    )) => {
+                        println!("{:?}", result);
+                        #result_type_tok::try_from(r#return).unwrap()
+                    },
+                    None => panic!("Invalid type")
+                }
+            }
+        }
+    }).collect();
+
+    let protocol_imports_tok: Vec<TokenStream> =
+        protocol_imports.iter().map(|name| name.parse().unwrap()).collect();
+    let imports_tok = vec![
+        quote! {
+            use cuda_over_ip_protocol::protocol::{ #(#protocol_imports_tok),* };
+        },
+    ];
+
+    let final_tokens: Vec<TokenStream> = other_imports.into_iter()
+        .chain(imports_tok.into_iter())
+        .chain(functions_tok.into_iter())
+        .collect();
+    let items: Vec<Item> = final_tokens.into_iter()
+        .map(|t| parse2::<Item>(t).unwrap()).collect();
+    let file = syn::File {
+        shebang: None,
+        attrs: vec![],
+        items,
+    };
+    let text = prettyplease::unparse(&file);
+
+    let mut output_file = File::create(output_path).unwrap();
+    output_file.write(text.as_bytes()).unwrap();
+}
+
+fn c_to_rust_name(c_enum_name: &str) -> String {
+    AsUpperCamelCase(c_enum_name).to_string()
 }
 
 /*fn transform_file(entities: Vec<Entity>, function_descriptions: HashMap<String, FunctionDescription>) -> String {

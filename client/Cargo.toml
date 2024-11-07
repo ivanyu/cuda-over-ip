@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 resolver = "2"
 
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
 [dependencies]
 cuda-over-ip-protocol = {path = "../protocol"}
 prost = "0.13.3"
