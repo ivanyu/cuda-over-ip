@@ -11,6 +11,7 @@ pub(crate) fn handle_call(
         }
     }
 }
+#[allow(non_snake_case)]
 fn handle_NvmlInitWithFlags(
     call: protocol::NvmlInitWithFlagsFuncCall,
     libnvidia: &Library,

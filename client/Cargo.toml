@@ -11,3 +11,4 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 cuda-over-ip-protocol = {path = "../protocol"}
 prost = "0.13.3"
 byteorder = "1.5.0"
+static_init = "1.0.3"

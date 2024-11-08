@@ -46,7 +46,7 @@ fn serve(tcp_stream_read: TcpStream) {
         };
         println!("{:?}", result);
 
-        if let Err(e) = respond(&mut buf_writer, result) {
+        if let Err(e) = send_result(&mut buf_writer, result) {
             eprintln!("Error responding: {}", e);
             break;
         }
@@ -60,7 +60,7 @@ fn read_call(buf_reader: &mut BufReader<TcpStream>) -> std::io::Result<FuncCall>
     Ok(FuncCall::decode(&*buf)?)
 }
 
-fn respond(buf_writer: &mut BufWriter<TcpStream>, result: FuncResult) -> std::io::Result<()> {
+fn send_result(buf_writer: &mut BufWriter<TcpStream>, result: FuncResult) -> std::io::Result<()> {
     let mut buf = Vec::<u8>::with_capacity(result.encoded_len());
     result.encode(&mut buf)?;
     buf_writer.write_u32::<BigEndian>(result.encoded_len() as u32)?;

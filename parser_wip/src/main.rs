@@ -7,7 +7,6 @@ use std::io::Write;
 use heck::AsUpperCamelCase;
 use serde::Deserialize;
 use syn::{parse2, Item};
-use syn::parse::Parser;
 
 const RETURN_FIELD: &str = "return";
 
@@ -302,13 +301,12 @@ fn c_to_protobuf_type(type_: &Type) -> String {
 }
 
 fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<String, FunctionDef>) {
+    let mod_tok = quote! {mod non_generated;};
+
     let import_toks = vec![
-        quote! {use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};},
-        quote! {use std::io::{BufReader, BufWriter, Read, Write};},
-        quote! {use std::net::TcpStream;},
-        quote! {use prost::Message;},
         quote! {use cuda_over_ip_protocol::protocol;},
-        quote! {use cuda_over_ip_protocol::protocol::{func_result, func_call, FuncCall, FuncResult};},
+        quote! {use cuda_over_ip_protocol::protocol::{func_result, func_call, FuncCall};},
+        quote! {use crate::non_generated::send_call_and_get_result;},
     ];
 
     let function_toks: Vec<TokenStream> = functions.iter().map(|(name, def)| {
@@ -339,28 +337,19 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
         quote! {
             #[no_mangle]
             pub unsafe extern "C" fn #name_tok (#(#params_tok),*) -> protocol:: #result_type_tok {
-                let tcp_stream_read = TcpStream::connect("127.0.0.1:19999").unwrap();
-                let tcp_stream_write = tcp_stream_read.try_clone().unwrap();
-                tcp_stream_read.set_nodelay(true).unwrap();
+                let mut write_guard = non_generated::WRITER_AND_READER.write();
+                let (buf_writer, buf_reader) = match write_guard.get_mut() {
+                    Ok(r) => { r }
+                    Err(_) => panic!("poisoned")
+                };
 
                 let call = FuncCall {
                     r#type: Some(
                         func_call::Type::#call_struct_name_tok(protocol:: #call_struct_name_tok { #(#in_params_tok),* })
                     )
                 };
-                let mut buf = Vec::<u8>::with_capacity(call.encoded_len());
-                call.encode(&mut buf).unwrap();
+                let result = send_call_and_get_result(buf_writer, buf_reader, call);
 
-                let mut buf_writer = BufWriter::new(tcp_stream_write);
-                buf_writer.write_u32::<BigEndian>(call.encoded_len() as u32).unwrap();
-                buf_writer.write_all(&buf).unwrap();
-                buf_writer.flush().unwrap();
-
-                let mut buf_reader = BufReader::new(tcp_stream_read);
-                let size = buf_reader.read_u32::<BigEndian>().unwrap() as usize;
-                let mut buf = vec![0_u8; size];
-                buf_reader.read_exact(&mut buf).unwrap();
-                let result = FuncResult::decode(&*buf).unwrap();
                 match result.r#type {
                     Some(func_result::Type::#result_struct_name_tok(
                         #(#out_params_tok),* protocol:: #result_struct_name_tok{r#return}
@@ -374,7 +363,8 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
         }
     }).collect();
 
-    let final_tokens: Vec<TokenStream> = import_toks.into_iter()
+    let final_tokens: Vec<TokenStream> = vec![mod_tok].into_iter()
+        .chain(import_toks.into_iter())
         .chain(function_toks.into_iter())
         .collect();
     let items: Vec<Item> = final_tokens.into_iter()
@@ -423,7 +413,7 @@ fn generate_server(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
 }
 
 fn generate_high_level_handle_call_function(functions: &HashMap<String, FunctionDef>) -> TokenStream {
-    let match_branch_toks: Vec<TokenStream> = functions.iter().map(|(name, function_def)| {
+    let match_branch_toks: Vec<TokenStream> = functions.iter().map(|(name, _)| {
         let call_struct_name = c_to_rust_name(name) + "FuncCall";
         let call_struct_name_tok: TokenStream = call_struct_name.parse().unwrap();
         let handle_function_name = format!("handle_{}", c_to_rust_name(name));
@@ -444,6 +434,9 @@ fn generate_high_level_handle_call_function(functions: &HashMap<String, Function
 }
 
 fn generate_concrete_handle_call_function(name: &String, function_def: &FunctionDef) -> TokenStream {
+    let handle_function_name = format!("handle_{}", c_to_rust_name(name));
+    let handle_function_name_tok: TokenStream = handle_function_name.parse().unwrap();
+
     let c_func_name_bytes = format!("b\"{}\"", name);
     let c_func_name_bytes_tok: TokenStream = c_func_name_bytes.parse().unwrap();
 
@@ -464,7 +457,8 @@ fn generate_concrete_handle_call_function(name: &String, function_def: &Function
     let result_struct_name_tok: TokenStream = result_struct_name.parse().unwrap();
 
     quote! {
-        fn handle_NvmlInitWithFlags(call: protocol::NvmlInitWithFlagsFuncCall, libnvidia: &Library) -> Result<FuncResult, String> {
+        #[allow(non_snake_case)]
+        fn #handle_function_name_tok(call: protocol::NvmlInitWithFlagsFuncCall, libnvidia: &Library) -> Result<FuncResult, String> {
             let func: #symbol_tok = unsafe {
                 libnvidia.get(#c_func_name_bytes_tok).unwrap()
             };
