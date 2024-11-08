@@ -9,6 +9,7 @@ pub(crate) fn handle_call(
         func_call::Type::NvmlInitWithFlagsFuncCall(c) => {
             handle_NvmlInitWithFlags(c, &libnvidia)
         }
+        func_call::Type::NvmlShutdownFuncCall(c) => handle_NvmlShutdown(c, &libnvidia),
     }
 }
 #[allow(non_snake_case)]
@@ -24,6 +25,24 @@ fn handle_NvmlInitWithFlags(
     Ok(FuncResult {
         r#type: Some(
             func_result::Type::NvmlInitWithFlagsFuncResult(protocol::NvmlInitWithFlagsFuncResult {
+                r#return: result,
+            }),
+        ),
+    })
+}
+#[allow(non_snake_case)]
+fn handle_NvmlShutdown(
+    call: protocol::NvmlShutdownFuncCall,
+    libnvidia: &Library,
+) -> Result<FuncResult, String> {
+    let func: libloading::Symbol<unsafe extern fn() -> i32> = unsafe {
+        libnvidia.get(b"nvmlShutdown").unwrap()
+    };
+    println!("{:?}", func);
+    let result = unsafe { func() };
+    Ok(FuncResult {
+        r#type: Some(
+            func_result::Type::NvmlShutdownFuncResult(protocol::NvmlShutdownFuncResult {
                 r#return: result,
             }),
         ),

@@ -39,15 +39,23 @@ message nvmlInitWithFlagsFuncCall {
 message nvmlInitWithFlagsFuncResult {
   nvmlReturn_t return = 1;
 }
+message nvmlShutdownFuncCall {
+}
+
+message nvmlShutdownFuncResult {
+  nvmlReturn_t return = 1;
+}
 
 message FuncCall {
   oneof type {
     nvmlInitWithFlagsFuncCall nvmlInitWithFlagsFuncCall = 1;
+    nvmlShutdownFuncCall nvmlShutdownFuncCall = 2;
   }
 }
 
 message FuncResult {
   oneof type {
     nvmlInitWithFlagsFuncResult nvmlInitWithFlagsFuncResult = 1;
+    nvmlShutdownFuncResult nvmlShutdownFuncResult = 2;
   }
 }

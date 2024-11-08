@@ -3,3 +3,5 @@
   params:
     - name: flags
       direction: in
+- name: nvmlShutdown
+  params: []

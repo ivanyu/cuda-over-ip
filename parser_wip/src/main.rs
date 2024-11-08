@@ -357,7 +357,7 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
                         println!("{:?}", result);
                         protocol:: #result_type_tok::try_from(r#return).unwrap()
                     },
-                    None => panic!("Invalid type")
+                    t => panic!("Invalid type {:?}", t)
                 }
             }
         }
@@ -423,7 +423,6 @@ fn generate_high_level_handle_call_function(functions: &HashMap<String, Function
             func_call::Type::#call_struct_name_tok(c) => #handle_function_name_tok(c, &libnvidia)
         }
     }).collect();
-
     quote! {
         pub(crate) fn handle_call(call: FuncCall, libnvidia: &Library) -> Result<FuncResult, String> {
             match call.r#type.ok_or("No type provided")? {
@@ -453,12 +452,14 @@ fn generate_concrete_handle_call_function(name: &String, function_def: &Function
         quote! {call.#name_tok}
     }).collect();
 
+    let call_struct_name = c_to_rust_name(name) + "FuncCall";
+    let call_struct_name_tok: TokenStream = call_struct_name.parse().unwrap();
     let result_struct_name = c_to_rust_name(name) + "FuncResult";
     let result_struct_name_tok: TokenStream = result_struct_name.parse().unwrap();
 
     quote! {
         #[allow(non_snake_case)]
-        fn #handle_function_name_tok(call: protocol::NvmlInitWithFlagsFuncCall, libnvidia: &Library) -> Result<FuncResult, String> {
+        fn #handle_function_name_tok(call: protocol:: #call_struct_name_tok, libnvidia: &Library) -> Result<FuncResult, String> {
             let func: #symbol_tok = unsafe {
                 libnvidia.get(#c_func_name_bytes_tok).unwrap()
             };
