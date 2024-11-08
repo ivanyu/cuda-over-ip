@@ -302,20 +302,16 @@ fn c_to_protobuf_type(type_: &Type) -> String {
 }
 
 fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<String, FunctionDef>) {
-    let other_imports = vec![
+    let import_toks = vec![
         quote! {use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};},
         quote! {use std::io::{BufReader, BufWriter, Read, Write};},
         quote! {use std::net::TcpStream;},
         quote! {use prost::Message;},
+        quote! {use cuda_over_ip_protocol::protocol;},
+        quote! {use cuda_over_ip_protocol::protocol::{func_result, func_call, FuncCall, FuncResult};},
     ];
 
-    let mut protocol_imports: HashSet<String> = HashSet::new();
-    protocol_imports.insert("FuncCall".to_owned());
-    protocol_imports.insert("func_call".to_owned());
-    protocol_imports.insert("FuncResult".to_owned());
-    protocol_imports.insert("func_result".to_owned());
-
-    let functions_tok: Vec<TokenStream> = functions.iter().map(|(name, def)| {
+    let function_toks: Vec<TokenStream> = functions.iter().map(|(name, def)| {
         let name_tok: TokenStream = name.parse().unwrap();
         let params_tok: Vec<TokenStream> = def.c_function.params.iter().map(|param_entity| {
             assert_eq!(param_entity.get_kind(), EntityKind::ParmDecl);
@@ -325,14 +321,11 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
         }).collect();
         let rust_enum_name = c_to_rust_name(&def.c_function.return_type.get_display_name());
         let result_type_tok: TokenStream = rust_enum_name.parse().unwrap();
-        protocol_imports.insert(rust_enum_name.clone());
 
         let call_struct_name = c_to_rust_name(name) + "FuncCall";
         let call_struct_name_tok: TokenStream = call_struct_name.parse().unwrap();
-        protocol_imports.insert(call_struct_name);
         let result_struct_name = c_to_rust_name(name) + "FuncResult";
         let result_struct_name_tok: TokenStream = result_struct_name.parse().unwrap();
-        protocol_imports.insert(result_struct_name);
 
         let in_params_tok: Vec<TokenStream> = def.description.params.iter()
             .filter(|param| param.direction == ParameterDirection::IN)
@@ -345,14 +338,14 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
 
         quote! {
             #[no_mangle]
-            pub unsafe extern "C" fn #name_tok (#(#params_tok),*) -> #result_type_tok {
+            pub unsafe extern "C" fn #name_tok (#(#params_tok),*) -> protocol:: #result_type_tok {
                 let tcp_stream_read = TcpStream::connect("127.0.0.1:19999").unwrap();
                 let tcp_stream_write = tcp_stream_read.try_clone().unwrap();
                 tcp_stream_read.set_nodelay(true).unwrap();
 
                 let call = FuncCall {
                     r#type: Some(
-                        func_call::Type::#call_struct_name_tok(#call_struct_name_tok { #(#in_params_tok),* })
+                        func_call::Type::#call_struct_name_tok(protocol:: #call_struct_name_tok { #(#in_params_tok),* })
                     )
                 };
                 let mut buf = Vec::<u8>::with_capacity(call.encoded_len());
@@ -370,10 +363,10 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
                 let result = FuncResult::decode(&*buf).unwrap();
                 match result.r#type {
                     Some(func_result::Type::#result_struct_name_tok(
-                        #(#out_params_tok),* #result_struct_name_tok{r#return}
+                        #(#out_params_tok),* protocol:: #result_struct_name_tok{r#return}
                     )) => {
                         println!("{:?}", result);
-                        #result_type_tok::try_from(r#return).unwrap()
+                        protocol:: #result_type_tok::try_from(r#return).unwrap()
                     },
                     None => panic!("Invalid type")
                 }
@@ -381,17 +374,8 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
         }
     }).collect();
 
-    let protocol_imports_tok: Vec<TokenStream> =
-        protocol_imports.iter().map(|name| name.parse().unwrap()).collect();
-    let imports_tok = vec![
-        quote! {
-            use cuda_over_ip_protocol::protocol::{ #(#protocol_imports_tok),* };
-        },
-    ];
-
-    let final_tokens: Vec<TokenStream> = other_imports.into_iter()
-        .chain(imports_tok.into_iter())
-        .chain(functions_tok.into_iter())
+    let final_tokens: Vec<TokenStream> = import_toks.into_iter()
+        .chain(function_toks.into_iter())
         .collect();
     let items: Vec<Item> = final_tokens.into_iter()
         .map(|t| parse2::<Item>(t).unwrap()).collect();
