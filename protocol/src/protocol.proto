@@ -32,22 +32,22 @@ enum nvmlReturn_t {
   NVML_ERROR_DEPRECATED = 26;
   NVML_ERROR_UNKNOWN = 999;
 }
-message nvmlInitWithFlagsCall {
+message nvmlInitWithFlagsFuncCall {
   uint32 flags = 1;
 }
 
-message nvmlInitWithFlagsResult {
+message nvmlInitWithFlagsFuncResult {
   nvmlReturn_t return = 1;
 }
 
-message Call {
+message FuncCall {
   oneof type {
-    nvmlInitWithFlagsCall nvmlInitWithFlagsCall = 1;
+    nvmlInitWithFlagsFuncCall nvmlInitWithFlagsFuncCall = 1;
   }
 }
 
-message Result {
+message FuncResult {
   oneof type {
-    nvmlInitWithFlagsResult nvmlInitWithFlagsResult = 1;
+    nvmlInitWithFlagsFuncResult nvmlInitWithFlagsFuncResult = 1;
   }
 }

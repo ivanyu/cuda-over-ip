@@ -1,5 +1,3 @@
-mod client;
-
 use clang::{Clang, Entity, EntityKind, Index, Type, TypeKind};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -9,6 +7,7 @@ use std::io::Write;
 use heck::AsUpperCamelCase;
 use serde::Deserialize;
 use syn::{parse2, Item};
+use syn::parse::Parser;
 
 const RETURN_FIELD: &str = "return";
 
@@ -151,6 +150,7 @@ fn main() {
 
     generate_protobuf("protocol/src/protocol.proto", &enums, &functions);
     generate_client("client/src/lib.rs", &enums, &functions);
+    generate_server("server/src/generated.rs", &enums, &functions);
 }
 
 fn extract_functions<'a>(entities: &'a [Entity<'a>], required_functions: HashSet<String>) -> HashMap<String, CFunction<'a>> {
@@ -244,7 +244,7 @@ fn generate_protobuf_functions(functions: &HashMap<String, FunctionDef>) -> Stri
     let mut result = String::new();
 
     for (name, func_def) in functions {
-        result.push_str(&format!("message {}Call {{\n", name));
+        result.push_str(&format!("message {}FuncCall {{\n", name));
 
         for (i, param) in func_def.c_function.params.iter().enumerate() {
             let param_name = param.get_name().unwrap();
@@ -261,7 +261,7 @@ fn generate_protobuf_functions(functions: &HashMap<String, FunctionDef>) -> Stri
         result.push_str("}\n");
         result.push_str("\n");
 
-        result.push_str(&format!("message {}Result {{\n", name));
+        result.push_str(&format!("message {}FuncResult {{\n", name));
 
         result.push_str(
             &format!("  {} {} = {};\n",
@@ -272,19 +272,19 @@ fn generate_protobuf_functions(functions: &HashMap<String, FunctionDef>) -> Stri
     }
     result.push_str("\n");
 
-    result.push_str("message Call {\n");
+    result.push_str("message FuncCall {\n");
     result.push_str("  oneof type {\n");
     for (i, (name, _)) in functions.iter().enumerate() {
-        result.push_str(&format!("    {}Call {}Call = {};\n", name, name, i + 1));
+        result.push_str(&format!("    {}FuncCall {}FuncCall = {};\n", name, name, i + 1));
     }
     result.push_str("  }\n");
     result.push_str("}\n");
     result.push_str("\n");
 
-    result.push_str("message Result {\n");
+    result.push_str("message FuncResult {\n");
     result.push_str("  oneof type {\n");
     for (i, (name, _)) in functions.iter().enumerate() {
-        result.push_str(&format!("    {}Result {}Result = {};\n", name, name, i + 1));
+        result.push_str(&format!("    {}FuncResult {}FuncResult = {};\n", name, name, i + 1));
     }
     result.push_str("  }\n");
     result.push_str("}\n");
@@ -310,34 +310,27 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
     ];
 
     let mut protocol_imports: HashSet<String> = HashSet::new();
-    protocol_imports.insert("Call".to_owned());
-    protocol_imports.insert("call".to_owned());
-    protocol_imports.insert("Result".to_owned());
-    protocol_imports.insert("result".to_owned());
+    protocol_imports.insert("FuncCall".to_owned());
+    protocol_imports.insert("func_call".to_owned());
+    protocol_imports.insert("FuncResult".to_owned());
+    protocol_imports.insert("func_result".to_owned());
 
     let functions_tok: Vec<TokenStream> = functions.iter().map(|(name, def)| {
         let name_tok: TokenStream = name.parse().unwrap();
         let params_tok: Vec<TokenStream> = def.c_function.params.iter().map(|param_entity| {
             assert_eq!(param_entity.get_kind(), EntityKind::ParmDecl);
             let name_tok: TokenStream = param_entity.get_name().unwrap().parse().unwrap();
-            let type_tok: TokenStream = match param_entity.get_type().unwrap().get_kind() {
-                TypeKind::UInt =>
-                // 32 bits should be enough for `unsigned int` on all realistic platforms
-                    quote!(u32),
-
-                t =>
-                    panic!("Unsupported type {:?}", t)
-            };
+            let type_tok: TokenStream = c_type_to_rust(&param_entity.get_type().unwrap());
             quote! { #name_tok: #type_tok }
         }).collect();
         let rust_enum_name = c_to_rust_name(&def.c_function.return_type.get_display_name());
         let result_type_tok: TokenStream = rust_enum_name.parse().unwrap();
         protocol_imports.insert(rust_enum_name.clone());
 
-        let call_struct_name = c_to_rust_name(name) + "Call";
+        let call_struct_name = c_to_rust_name(name) + "FuncCall";
         let call_struct_name_tok: TokenStream = call_struct_name.parse().unwrap();
         protocol_imports.insert(call_struct_name);
-        let result_struct_name = c_to_rust_name(name) + "Result";
+        let result_struct_name = c_to_rust_name(name) + "FuncResult";
         let result_struct_name_tok: TokenStream = result_struct_name.parse().unwrap();
         protocol_imports.insert(result_struct_name);
 
@@ -357,9 +350,9 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
                 let tcp_stream_write = tcp_stream_read.try_clone().unwrap();
                 tcp_stream_read.set_nodelay(true).unwrap();
 
-                let call = Call {
+                let call = FuncCall {
                     r#type: Some(
-                        call::Type::#call_struct_name_tok(#call_struct_name_tok { #(#in_params_tok),* })
+                        func_call::Type::#call_struct_name_tok(#call_struct_name_tok { #(#in_params_tok),* })
                     )
                 };
                 let mut buf = Vec::<u8>::with_capacity(call.encoded_len());
@@ -374,9 +367,9 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
                 let size = buf_reader.read_u32::<BigEndian>().unwrap() as usize;
                 let mut buf = vec![0_u8; size];
                 buf_reader.read_exact(&mut buf).unwrap();
-                let result = Result::decode(&*buf).unwrap();
+                let result = FuncResult::decode(&*buf).unwrap();
                 match result.r#type {
-                    Some(result::Type::#result_struct_name_tok(
+                    Some(func_result::Type::#result_struct_name_tok(
                         #(#out_params_tok),* #result_struct_name_tok{r#return}
                     )) => {
                         println!("{:?}", result);
@@ -413,8 +406,115 @@ fn generate_client(output_path: &str, _enums: &[EnumDef], functions: &HashMap<St
     output_file.write(text.as_bytes()).unwrap();
 }
 
+fn generate_server(output_path: &str, _enums: &[EnumDef], functions: &HashMap<String, FunctionDef>) {
+    let other_imports = vec![
+        quote! {use libloading::Library;},
+        quote! {use cuda_over_ip_protocol::protocol;},
+        quote! {use cuda_over_ip_protocol::protocol::{func_result, func_call, FuncCall, FuncResult};},
+    ];
+
+    // let mut protocol_imports: HashSet<String> = HashSet::new();
+
+    let handle_call_tok = generate_high_level_handle_call_function(&functions);
+    let functions_tok: Vec<TokenStream> = functions.iter().map(|(name, function_def)| {
+        generate_concrete_handle_call_function(&name, &function_def)
+    }).collect();
+
+    let final_tokens: Vec<TokenStream> = other_imports.into_iter()
+        // .chain(imports_tok.into_iter())
+        .chain(vec![handle_call_tok].into_iter())
+        .chain(functions_tok.into_iter())
+        .collect();
+    let items: Vec<Item> = final_tokens.into_iter()
+        .map(|t| parse2::<Item>(t).unwrap()).collect();
+    let file = syn::File {
+        shebang: None,
+        attrs: vec![],
+        items,
+    };
+    let text = prettyplease::unparse(&file);
+
+    let mut output_file = File::create(output_path).unwrap();
+    output_file.write(text.as_bytes()).unwrap();
+}
+
+fn generate_high_level_handle_call_function(functions: &HashMap<String, FunctionDef>) -> TokenStream {
+    let match_branch_toks: Vec<TokenStream> = functions.iter().map(|(name, function_def)| {
+        let call_struct_name = c_to_rust_name(name) + "FuncCall";
+        let call_struct_name_tok: TokenStream = call_struct_name.parse().unwrap();
+        let handle_function_name = format!("handle_{}", c_to_rust_name(name));
+        let handle_function_name_tok: TokenStream = handle_function_name.parse().unwrap();
+
+        quote! {
+            func_call::Type::#call_struct_name_tok(c) => #handle_function_name_tok(c, &libnvidia)
+        }
+    }).collect();
+
+    quote! {
+        pub(crate) fn handle_call(call: FuncCall, libnvidia: &Library) -> Result<FuncResult, String> {
+            match call.r#type.ok_or("No type provided")? {
+                #(#match_branch_toks),*
+            }
+        }
+    }
+}
+
+fn generate_concrete_handle_call_function(name: &String, function_def: &FunctionDef) -> TokenStream {
+    let c_func_name_bytes = format!("b\"{}\"", name);
+    let c_func_name_bytes_tok: TokenStream = c_func_name_bytes.parse().unwrap();
+
+    let symbol_param_toks: Vec<TokenStream> = function_def.c_function.params.iter().map(|param| {
+        c_type_to_rust(&param.get_type().unwrap())
+    }).collect();
+    let symbol_result_tok = c_type_to_rust(&function_def.c_function.return_type);
+    let symbol_tok = quote! {
+        libloading::Symbol<unsafe extern fn(#(#symbol_param_toks),*) -> #symbol_result_tok>
+    };
+
+    let call_param_toks: Vec<TokenStream> = function_def.c_function.params.iter().map(|param| {
+        let name_tok: TokenStream = param.get_name().unwrap().parse().unwrap();
+        quote! {call.#name_tok}
+    }).collect();
+
+    let result_struct_name = c_to_rust_name(name) + "FuncResult";
+    let result_struct_name_tok: TokenStream = result_struct_name.parse().unwrap();
+
+    quote! {
+        fn handle_NvmlInitWithFlags(call: protocol::NvmlInitWithFlagsFuncCall, libnvidia: &Library) -> Result<FuncResult, String> {
+            let func: #symbol_tok = unsafe {
+                libnvidia.get(#c_func_name_bytes_tok).unwrap()
+            };
+            println!("{:?}", func);
+            let result = unsafe { func(#(#call_param_toks),*) };
+
+            Ok(FuncResult {
+                r#type: Some(
+                    func_result::Type::#result_struct_name_tok(protocol::#result_struct_name_tok {
+                        r#return: result
+                    })
+                ),
+            })
+        }
+    }
+}
+
 fn c_to_rust_name(c_enum_name: &str) -> String {
     AsUpperCamelCase(c_enum_name).to_string()
+}
+
+fn c_type_to_rust(type_: &Type) -> TokenStream {
+    match type_.get_kind() {
+        TypeKind::UInt =>
+        // 32 bits should be enough for `unsigned int` on all realistic platforms.
+            quote!(u32),
+
+        TypeKind::Elaborated =>
+        // Maybe at some point we need something more sophisticated, but now assuming this is struct.
+            quote!(i32),
+
+        t =>
+            panic!("Unsupported type {:?}", t)
+    }
 }
 
 /*fn transform_file(entities: Vec<Entity>, function_descriptions: HashMap<String, FunctionDescription>) -> String {
