@@ -1,3 +1,3 @@
 [workspace]
-members = ["protocol", "client", "server", "parser_wip"]
+members = ["protocol", "client", "server", "parser_wip", "common"]
 resolver = "2"

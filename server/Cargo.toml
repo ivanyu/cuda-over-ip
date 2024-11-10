@@ -6,6 +6,8 @@ resolver = "2"
 
 [dependencies]
 cuda-over-ip-protocol = {path = "../protocol"}
+cuda-over-ip-common = {path = "../common"}
 prost = "0.13.3"
 byteorder = "1.5.0"
 libloading = "0.8.5"
+anyhow = "1.0.93"

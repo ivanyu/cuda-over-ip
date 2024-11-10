@@ -1,0 +1,10 @@
+[package]
+name = "cuda-over-ip-common"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+
+[dependencies]
+num = "0.4.3"
+num-traits = "0.2.19"
+num-derive = "0.4.2"

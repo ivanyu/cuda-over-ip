@@ -17,7 +17,7 @@ pub(crate) static mut WRITER_AND_READER: Mutex<(BufWriter<TcpStream>, BufReader<
             exit(1);
         }
     };
-    read_stream.set_nodelay(true).unwrap();
+    read_stream.set_nodelay(true).expect("set_nodelay call failed");
     let write_stream = match read_stream.try_clone() {
         Ok(s) => s,
         Err(e) => {
@@ -29,13 +29,12 @@ pub(crate) static mut WRITER_AND_READER: Mutex<(BufWriter<TcpStream>, BufReader<
     Mutex::new((BufWriter::new(write_stream), BufReader::new(read_stream)))
 };
 
-pub(crate) unsafe fn as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-    std::slice::from_raw_parts((p as *const T) as *const u8, size_of::<T>())
+pub(crate) unsafe fn ptr_as_u8_slice<T: Sized>(p: *const T) -> &'static mut [u8] {
+    std::slice::from_raw_parts_mut(p as *mut u8, size_of::<T>())
 }
 
-pub(crate) unsafe fn u8_slice_as_value<T: Sized + Clone>(s: &[u8]) -> T {
-    let ref_ = (s.as_ptr() as *const T).as_ref().unwrap();
-    (*ref_).clone()
+pub(crate) unsafe fn as_u8_slice<T: Sized>(p: &T) -> &[u8] {
+    std::slice::from_raw_parts((p as *const T) as *const u8, size_of::<T>())
 }
 
 pub(crate) fn send_call(buf_writer: &mut BufWriter<TcpStream>,
