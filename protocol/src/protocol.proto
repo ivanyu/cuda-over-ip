@@ -32,6 +32,12 @@ enum nvmlReturn_t {
   NVML_ERROR_DEPRECATED = 26;
   NVML_ERROR_UNKNOWN = 999;
 }
+message nvmlShutdownFuncCall {
+}
+
+message nvmlShutdownFuncResult {
+  nvmlReturn_t return = 1;
+}
 message nvmlInitWithFlagsFuncCall {
   uint32 flags = 1;
 }
@@ -39,23 +45,17 @@ message nvmlInitWithFlagsFuncCall {
 message nvmlInitWithFlagsFuncResult {
   nvmlReturn_t return = 1;
 }
-message nvmlShutdownFuncCall {
-}
-
-message nvmlShutdownFuncResult {
-  nvmlReturn_t return = 1;
-}
 
 message FuncCall {
   oneof type {
-    nvmlInitWithFlagsFuncCall nvmlInitWithFlagsFuncCall = 1;
-    nvmlShutdownFuncCall nvmlShutdownFuncCall = 2;
+    nvmlShutdownFuncCall nvmlShutdownFuncCall = 1;
+    nvmlInitWithFlagsFuncCall nvmlInitWithFlagsFuncCall = 2;
   }
 }
 
 message FuncResult {
   oneof type {
-    nvmlInitWithFlagsFuncResult nvmlInitWithFlagsFuncResult = 1;
-    nvmlShutdownFuncResult nvmlShutdownFuncResult = 2;
+    nvmlShutdownFuncResult nvmlShutdownFuncResult = 1;
+    nvmlInitWithFlagsFuncResult nvmlInitWithFlagsFuncResult = 2;
   }
 }

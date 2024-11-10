@@ -1,7 +1,10 @@
 ---
 - name: nvmlInitWithFlags
+  id: 0
   params:
     - name: flags
       direction: in
+
 - name: nvmlShutdown
+  id: 1
   params: []
